@@ -87,14 +87,14 @@
     $(window).bind('beforeunload', () => {
       sessionStorage.clear();
     });
-    $.ajaxSetup({
-      beforeSend: function(jqXHR) {
-        var redisCommanderBearerToken = sessionStorage.getItem('redisCommanderBearerToken');
-        if (redisCommanderBearerToken) {
-          jqXHR.setRequestHeader('Authorization', 'Bearer ' + redisCommanderBearerToken);
-        }
-      }
-    });
+    //$.ajaxSetup({
+    //  beforeSend: function(jqXHR) {
+    //    var redisCommanderBearerToken = sessionStorage.getItem('redisCommanderBearerToken');
+    //    if (redisCommanderBearerToken) {
+    //      jqXHR.setRequestHeader('Authorization', 'Bearer ' + redisCommanderBearerToken);
+    //    }
+    //  }
+    //});
     function refreshToken() {
       $.post('signin', {}, function (data, status) {
         if (status != 'success') {
@@ -162,7 +162,7 @@
     .fail(err => {
       console.error("Failed to fetch connections", err);
     });
-    
-    
+
+
   });
 </script>
