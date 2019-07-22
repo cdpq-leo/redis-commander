@@ -1,132 +1,151 @@
 'use strict';
-var foldingCharacter = ":";
 
 var CmdParser = require('cmdparser');
+var cmdparser;
+
 function loadTree () {
-  $.get('apiv1/connection', function (isConnected) {
+  $.get('apiv2/connection', function (isConnected) {
     if (isConnected) {
-      $('#keyTree').bind("loaded.jstree", function () {
+      $('#keyTree').on('loaded.jstree', function () {
         var tree = getKeyTree();
         if (tree) {
-          var root = tree._get_children(-1)[0];
+          var root = tree.get_container().children("ul:eq(0)").children("li");
           tree.open_node(root, null, true);
         }
       });
-      getServerInfo(function (data) {
+      $.get('connections', function (data) {
         var json_dataData = [];
 
-        data.forEach(function (instance, index) {
-          var label = instance.label;
-          var host = instance.host;
-          var port = instance.port;
-          var db = instance.db;
-          json_dataData.push({
-            data: label + " (" + host + ":" + port + ":" + db + ")",
-            state: "closed",
-            attr: {
-              id: host + ":" + port + ":" + db,
+        if (data.connections) {
+          data.connections.every(function (instance) {
+            // build root objects for jsontree
+            var treeObj = {
+              id: instance.conId,
+              text: instance.label + " (" + instance.options.host + ":" + instance.options.port + ":" + instance.options.db + ")",
+              state: {opened: false},
+              icon: getIconForType('root'),
+              children: true,
               rel: "root"
-            }
-          });
-          if (index === data.length - 1) {
-            return onJSONDataComplete();
+            };
+            json_dataData.push(treeObj);
+            return true;
+         });
+        }
+        return onJSONDataComplete();
+
+        function getJsonTreeData(node, cb) {
+          if (node.id === '#') return cb(json_dataData);
+
+          var dataUrl;
+          if (node.parent === '#') {
+              dataUrl = 'apiv2/keystree/' + encodeURIComponent(node.id) + '/';
           }
-        });
+          else {
+              var root = getRootConnection(node);
+              var path = getFullKeyPath(node);
+              dataUrl = 'apiv2/keystree/' + encodeURIComponent(root) + '/' + encodeURIComponent(path) + '?absolute=false';
+          }
+          $.get({
+              url: dataUrl,
+              dataType: 'json'
+          }).done(function(nodeData) {
+            if (Array.isArray(nodeData)) {
+              nodeData.forEach(function(elem) {
+                 if (elem.rel) elem.icon = getIconForType(elem.rel);
+              });
+            }
+            cb(nodeData)
+          }).fail(function(error) {
+            console.log('Error fetching data for node ' + node.id + ': ' + JSON.stringify(error));
+            cb('Error fetching data');
+          });
+        }
+
+        function getIconForType(type) {
+          switch (type) {
+              case 'root': return 'images/treeRoot.png';
+              case 'string': return 'images/treeString.png';
+              case 'hash': return 'images/treeHash.png';
+              case 'set': return 'images/treeSet.png';
+              case 'list': return 'images/treeList.png';
+              case 'zset': return 'images/treeZSet.png';
+              case 'stream': return 'images/treeStream.png';
+              default: return null;
+          }
+        }
+
         function onJSONDataComplete () {
           $('#keyTree').jstree({
-            json_data: {
-              data: json_dataData,
-              ajax: {
-                url: function (node) {
-                  if (node !== -1) {
-                    var path = getFullKeyPath(node);
-                    var root = getRootConnection(node);
-                    return 'apiv1/keystree/' + encodeURIComponent(root) + '/' + encodeURIComponent(path) + '?absolute=false';
+              core: {
+                  data: getJsonTreeData,
+                  multiple : false,
+                  check_callback : true,
+                  //themes: {
+                  //    responsive: true
+                  //}
+              },
+              contextmenu: {
+                  items: function (node) {
+                      var menu = {
+                          "addKey": {
+                              icon: './images/icon-plus.png',
+                              label: "Add Key",
+                              action: addKey
+                          },
+                          "refresh": {
+                              icon: './images/icon-refresh.png',
+                              label: "Refresh",
+                              action: function (obj) {
+                                  jQuery.jstree.reference("#keyTree").refresh(obj);
+                              }
+                          },
+                          "remKey": {
+                              icon: './images/icon-trash.png',
+                              label: 'Remove Key',
+                              action: deleteKey
+                          },
+                          "remConnection": {
+                              icon: './images/icon-trash.png',
+                              label: 'Disconnect',
+                              action: removeServer
+                          }
+                      };
+                      var rel = node.original.rel;
+                      if (typeof rel !== 'undefined' && rel !== 'root') {
+                          delete menu['addKey'];
+                      }
+                      if (rel !== 'root') {
+                          delete menu['remConnection'];
+                      }
+                      if (rel === 'root') {
+                          delete menu['remKey'];
+                      }
+                      if (redisReadOnly) {
+                          delete menu['addKey'];
+                          delete menu['remKey'];
+                      }
+                      return menu;
                   }
-                  var root = getRootConnection(node);
-                  return 'apiv1/keystree/' + encodeURIComponent(root);
-                }
-              }
-            },
-            types: {
-              types: {
-                "root": {
-                  icon: {
-                    image: 'images/treeRoot.png'
-                  }
-                },
-                "string": {
-                  icon: {
-                    image: 'images/treeString.png'
-                  }
-                },
-                "hash": {
-                  icon: {
-                    image: 'images/treeHash.png'
-                  }
-                },
-                "set": {
-                  icon: {
-                    image: 'images/treeSet.png'
-                  }
-                },
-                "list": {
-                  icon: {
-                    image: 'images/treeList.png'
-                  }
-                },
-                "zset": {
-                  icon: {
-                    image: 'images/treeZSet.png'
-                  }
-                }
-              }
-            },
-            contextmenu: {
-              items: function (node) {
-                var menu = {
-                  "addKey": {
-                    icon: 'icon-plus',
-                    label: "Add Key",
-                    action: addKey
-                  },
-                  "refresh": {
-                    icon: 'icon-refresh',
-                    label: "Refresh",
-                    action: function (obj) {
-                      jQuery.jstree._reference("#keyTree").refresh(obj);
-                    }
-                  },
-                  "remKey": {
-                    icon: 'icon-trash',
-                    label: 'Remove Key',
-                    action: deleteKey
-                  },
-                  "remConnection": {
-                    icon: 'icon-trash',
-                    label: 'Disconnect',
-                    action: removeServer
-                  }
-                };
-                var rel = node.attr('rel');
-                if (rel != undefined && rel != 'root') {
-                  delete menu['addKey'];
-                }
-                if (rel != 'root') {
-                  delete menu['remConnection'];
-                }
-                if (rel == 'root') {
-                  delete menu['remKey'];
-                }
-                return menu;
-              }
-            },
-            plugins: [ "themes", "json_data", "types", "ui", "contextmenu" ]
+              },
+              plugins: [ "themes", "contextmenu" ]
           })
-            .bind("select_node.jstree", treeNodeSelected)
-            .delegate("a", "click", function (event, data) {
-              event.preventDefault();
-            });
+          .on('select_node.jstree', treeNodeSelected)
+          .delegate("a", "click", function (event, data) {
+            event.preventDefault();
+          })
+          .on('keyup', function (e) {
+              var key = e.which;
+              // delete
+              if (key === 46) {
+                  var node = getKeyTree().get_selected(true)[0];
+                  // do not allow deletion of entire server, only keys within
+                  if (node.parent !== '#') {
+                    var connId = node.parents[node.parents.length-2];
+                    deleteKey(connId, getFullKeyPath(node));
+                  }
+              }
+          });
+
         }
       });
     }
@@ -135,47 +154,58 @@ function loadTree () {
 
 function treeNodeSelected (event, data) {
   $('#body').html('Loading...');
-
-  var pathParts = getKeyTree().get_path(data.rslt.obj, true);
-  var path = pathParts.slice(1).join(foldingCharacter);
-  var connectionId = pathParts.slice(0, 1)[0];
-  if (pathParts.length === 1) {
-    var hostAndPort = pathParts[0].split(':');
-    $.get('apiv1/server/info', function (data, status) {
-      if (status != 'success') {
+  var connectionId;
+  if (data.node.parent === '#') {
+    connectionId = data.node.id;
+    $.get('apiv2/server/' + connectionId + '/info', function (data, status) {
+      if (status !== 'success') {
         return alert("Could not load server info");
       }
       data = JSON.parse(data);
-      data.forEach(function (instance) {
-        if (instance.host == hostAndPort[0] && instance.port == hostAndPort[1]) {
-          instance.connectionId = connectionId;
-          var html = new EJS({ url: 'templates/serverInfo.ejs' }).render(instance);
-          $('#body').html(html);
-          return setupAddKeyButton();
+      data.some(function (instance) {
+        if (instance.connectionId === connectionId) {
+          if (!instance.disabled) {
+            renderEjs('templates/serverInfo.ejs', instance, $('#body'), setupAddKeyButton);
+          }
+          else {
+            var html = '<div>ERROR: ' + (instance.error ? instance.error : 'Server not available - cannot query status informations.') + '</div>';
+            $('#body').html(html);
+            setupAddKeyButton();
+          }
+          return true;
         }
+        return false;
       });
     });
   } else {
+    connectionId = getRootConnection(data.node);
+    var path = getFullKeyPath(data.node);
     return loadKey(connectionId, path);
   }
 }
 
 function getFullKeyPath (node) {
-  return $.jstree._focused().get_path(node, true).slice(1).join(foldingCharacter);
+  if (node.parent === '#') {
+      return '';
+  }
+  return node.id.substr(getRootConnection(node).length + 1);
 }
 
 function getRootConnection (node) {
-  return $.jstree._focused().get_path(node, true).slice(0, 1);
+  if (node.parent === '#') {
+      return node.id;
+  }
+  return node.parents[node.parents.length-2];
 }
 
 function loadKey (connectionId, key, index) {
   if (index) {
-    $.get('apiv1/key/' + encodeURIComponent(connectionId) + "/" + encodeURIComponent(key) + "/" + index, processData);
+    $.get('apiv2/key/' + encodeURIComponent(connectionId) + "/" + encodeURIComponent(key) + "?index=" + index, processData);
   } else {
-    $.get('apiv1/key/' + encodeURIComponent(connectionId) + "/" + encodeURIComponent(key), processData);
+    $.get('apiv2/key/' + encodeURIComponent(connectionId) + "/" + encodeURIComponent(key), processData);
   }
   function processData (data, status) {
-    if (status != 'success') {
+    if (status !== 'success') {
       return alert("Could not load key data");
     }
 
@@ -198,298 +228,271 @@ function loadKey (connectionId, key, index) {
       case 'zset':
         selectTreeNodeZSet(data);
         break;
+      case 'stream':
+        selectTreeNodeStream(data);
+        break;
       case 'none':
         selectTreeNodeBranch(data);
         break;
       default:
         var html = JSON.stringify(data);
         $('#body').html(html);
+        resizeApp();
         break;
     }
-    resizeApp();
   }
 }
+
 function selectTreeNodeBranch (data) {
-  var html = new EJS({ url: 'templates/editBranch.ejs' }).render(data);
-  $('#body').html(html);
-}
-function setupEditListButton () {
-  $('#editListRowForm').ajaxForm({
-    beforeSubmit: function () {
-      console.log('saving');
-      $('#editListValueButton').button('loading');
-    },
-    error: function (err) {
-      console.log('save error', arguments);
-      alert("Could not save '" + err.statusText + "'");
-      saveComplete();
-    },
-    success: function () {
-      console.log('saved', arguments);
-      $('#editListValueButton').button('reset');
-      saveComplete();
-    }
-  });
-
-  function saveComplete () {
-    setTimeout(function () {
-      refreshTree();
-      getKeyTree().select_node(0);
-      $('#editListRowModal').modal('hide');
-    }, 500);
-  }
+  renderEjs('templates/editBranch.ejs', data, $('#body'));
 }
 
-function setupEditSetButton () {
-  $('#editSetMemberForm').ajaxForm({
-    beforeSubmit: function () {
-      console.log('saving');
-      $('#editSetMemberButton').button('loading');
-    },
-    error: function (err) {
+function setupEditDataModals(idForm, idSaveBtn) {
+  $('#' + idForm).off('submit').on('submit', function(event) {
+    console.log('saving');
+    event.preventDefault();
+    var editForm = $(event.target);
+    var editModal = editForm.closest('.modal');
+    editModal.find('#' + idSaveBtn).button('loading');
+
+    $.post(editForm.attr('action'), editForm.serialize()
+    ).done(function (data, status) {
+      console.log('saved', arguments);
+    })
+    .fail(function (err) {
       console.log('save error', arguments);
       alert("Could not save '" + err.statusText + "'");
-      saveComplete();
-    },
-    success: function () {
-      console.log('saved', arguments);
-      $('#editSetMemberButton').button('reset');
-      saveComplete();
-    }
+    })
+    .always(function () {
+      setTimeout(function () {
+        refreshTree();
+        getKeyTree().select_node(0);
+        editModal.find('#' + idSaveBtn).button('reset');
+        editModal.modal('hide');
+      }, 500);
+    });
   });
-
-  function saveComplete () {
-    setTimeout(function () {
-      $('#editSetMemberModal').modal('hide');
-      refreshTree();
-      getKeyTree().select_node(0);
-    }, 500);
-  }
 }
-function setupEditZSetButton () {
-  $('#editZSetRowForm').ajaxForm({
-    beforeSubmit: function () {
-      console.log('saving');
-      $('#editZSetValueButton').button('loading');
-    },
-    error: function (err) {
-      console.log('save error', arguments);
-      alert("Could not save '" + err.statusText + "'");
-      saveComplete();
-    },
-    success: function () {
-      console.log('saved', arguments);
-      $('#editZSetValueButton').button('reset');
-      saveComplete();
-    }
+
+function setupJsonInputValidator(idJsonCheckbox, idInput) {
+  var chkBox = $('#' + idJsonCheckbox);
+  chkBox.on('change', function(element) {
+    if (element.target.checked) addInputValidator(idInput, 'json');
+    else removeInputValidator(idInput);
+  });
+  chkBox.closest('.modal').on('hidden', function() {
+    removeInputValidator(idInput);
+    chkBox.prop('checked', false);
+  })
+}
+
+function setupAddServerForm() {
+  var serverModal = $('#addServerModal');
+
+  // register add server form as ajax form to send bearer token too
+  $('#addServerForm').off('submit').on('submit', function (event) {
+    console.log('try connection to new redis server');
+    event.preventDefault();
+    $('#addServerBtn').prop("disabled", true).html("<i class='icon-refresh'></i> Saving");
+    var form = $(event.target);
+    $.post(form.attr('action'), form.serialize())
+        .done(function () {
+          if (arguments[0] && arguments[0].ok) {
+            console.log('Connect successful');
+            setTimeout(function() {
+              $(window).off('beforeunload', 'clearStorage');
+              location.reload();
+            }, 500);
+          }
+          else {
+            addServerError(arguments[0] ? arguments[0].message : 'Server error processing request');
+          }
+        })
+        .fail(function (err) {
+          console.log('connect error: ', arguments);
+          addServerError(err.statusText);
+        })
+        .always(function() {
+          $('#addServerBtn').prop("disabled", false).text("Connect...");
+        })
   });
 
-  function saveComplete () {
-    setTimeout(function () {
-      refreshTree();
-      getKeyTree().select_node(0);
-      $('#editZSetRowModal').modal('hide');
-    }, 500);
+  function addServerError(errMsg) {
+    alert("Could not connect to redis server '" + errMsg + "'");
+    serverModal.modal('hide');
   }
+
+  // prepare all input elements
+  serverModal.find('#addServerGroupSentinel').hide();
+  serverModal.find('#serverType').change(function () {
+    if ($(this).val() === 'redis') {
+      serverModal.find('#addServerGroupRedis').show();
+      serverModal.find('#addServerGroupSentinel').hide();
+    } else {
+      serverModal.find('#addServerGroupRedis').hide();
+      serverModal.find('#addServerGroupSentinel').show();
+    }
+  });
+  serverModal.find('input:radio[name=sentinelPWType]').change(function() {
+    if ($(this).val() === 'sentinel') {
+      serverModal.find('#sentinelPassword').prop('disabled', false)
+        .prev('label').removeClass('muted');
+    }
+    else {
+      serverModal.find('#sentinelPassword').prop('disabled', true)
+        .prev('label').addClass('muted');
+    }
+  })
 }
 
 function setupAddKeyButton (connectionId) {
-  $('#keyValue').keyup(function () {
-    var action = "apiv1/key/" + encodeURIComponent(connectionId) + "/" + encodeURIComponent($(this).val());
-    $('#addKeyForm').attr("action", action);
-  });
-  $('#keyType').change(function () {
-    var score = $('#scoreWrap');
-    if ($(this).val() == 'zset') {
+  var newKeyModal = $('#addKeyModal');
+  newKeyModal.find('#newStringValue').val('');
+  newKeyModal.find('#newFieldName').val('');
+  newKeyModal.find('#keyScore').val('');
+  newKeyModal.find('#addKeyConnectionId').val(connectionId);
+  newKeyModal.find('#addKeyValueIsJson').prop('checked', false);
+  newKeyModal.find('#addKeyFieldIsJson').prop('checked', false);
+  newKeyModal.find('#keyType').change(function () {
+    var score = newKeyModal.find('#scoreWrap');
+    if ($(this).val() === 'zset') {
       score.show();
     } else {
       score.hide();
     }
-  });
-  $('#addKeyForm').ajaxForm({
-    beforeSubmit: function () {
-      console.log('saving');
-      $('#saveKeyButton').attr("disabled", "disabled");
-      $('#saveKeyButton').html("<i class='icon-refresh'></i> Saving");
-    },
-    error: function (err) {
-      console.log('save error', arguments);
-      alert("Could not save '" + err.statusText + "'");
-      saveComplete();
-    },
-    success: function () {
-      console.log('saved', arguments);
-      saveComplete();
+    var field = newKeyModal.find('#fieldWrap');
+    if ($(this).val() === 'hash') {
+      field.show();
+    } else {
+      field.hide();
+    }
+    var fieldValue = newKeyModal.find('#fieldValueWrap');
+    var timestamp = newKeyModal.find('#timestampWrap');
+    if ($(this).val() === 'stream') {
+      fieldValue.show();
+      timestamp.show();
+    } else {
+      fieldValue.hide();
+      timestamp.hide();
     }
   });
-
-  function saveComplete () {
-    setTimeout(function () {
-      $('#saveKeyButton').html("Save");
-      $('#saveKeyButton').removeAttr("disabled");
-      refreshTree();
-      $('#addKeyModal').modal('hide');
-    }, 500);
-  }
 }
 
-function setupEditHashButton () {
-  $('#editHashFieldForm').ajaxForm({
-    beforeSubmit: function () {
-      console.log('saving');
-      $('#editHashFieldButton').button('loading');
-    },
-    error: function (err) {
-      console.log('save error', arguments);
-      alert("Could not save '" + err.statusText + "'");
-      saveComplete();
-    },
-    success: function () {
-      console.log('saved', arguments);
-      $('#editHashFieldButton').button('reset');
-      saveComplete();
-    }
-  });
+function addNewKey() {
+  var newKeyModal = $('#addKeyModal');
+  var newKey = newKeyModal.find('#keyValue').val();
+  var connectionId = newKeyModal.find('#addKeyConnectionId').val();
+  var action = "apiv2/key/" + encodeURIComponent(connectionId) + "/" + encodeURIComponent(newKey);
+  console.log('saving new key ' + newKey);
+  newKeyModal.find('#saveKeyButton').attr("disabled", "disabled").html("<i class='icon-refresh'></i> Saving");
 
-  function saveComplete () {
+  $.ajax({
+    url: action,
+    method: 'POST',
+    data: newKeyModal.find('#addKeyForm').serialize()
+  }).done(function() {
+    console.log('saved new key ' + newKey + ' at ' + connectionId);
+  }).fail(function(jqXHR, textStatus, errorThrown) {
+    console.log('save error for key ' + newKey + ': ' + textStatus);
+    alert("Could not save '" + errorThrown.statusText + "'");
+  }).always(function() {
     setTimeout(function () {
+      newKeyModal.find('#saveKeyButton').removeAttr("disabled").html("Save");
       refreshTree();
-      getKeyTree().select_node(0);
-      $('#editHashRowModal').modal('hide');
+      newKeyModal.modal('hide');
     }, 500);
-  }
+  });
 }
 
 function selectTreeNodeString (data) {
-  var html = new EJS({ url: 'templates/editString.ejs' }).render(data);
-  $('#body').html(html);
-
-  try {
-    data.value = JSON.stringify(JSON.parse(data.value), null, '  ');
-    $('#isJson').val('true');
-  } catch (ex) {
-    $('#isJson').val('false');
-  }
-
-  $('#stringValue').val(data.value);
-  try {
-    $('#jqtree_string_div').html(JSONTree.create(JSON.parse(data.value)));
-  } catch (err) {
-    $('#jqtree_string_div').text(err.message)
-  }
-  
-  $('#stringValue').keyup(function () {
-    $('#stringValueClippy').clippy({'text': $(this).val(), clippy_path: "clippy-jquery/clippy.swf"});
-    var dataTree;
+  renderEjs('templates/editString.ejs', data, $('#body'), function() {
+    var isJsonParsed = false;
     try {
-      dataTree = JSONTree.create(JSON.parse($(this).val()));
-    } catch (err) {
-      dataTree = err.message;
+      JSON.parse(data.value);
+      isJsonParsed = true;
+    } catch (ex) {
+      $('#isJson').prop('checked', false);
     }
-    $('#jqtree_string_div').text(dataTree);
-  }).keyup();
-  $('.clippyWrapper').tooltip();
-  $('#editStringForm').ajaxForm({
-    beforeSubmit: function () {
-      console.log('saving');
-      $('#saveKeyButton').attr("disabled", "disabled");
-      $('#saveKeyButton').html("<i class='icon-refresh'></i> Saving");
-    },
-    error: function (err) {
-      console.log('save error', arguments);
-      alert("Could not save '" + err.statusText + "'");
-      saveComplete();
-    },
-    success: function () {
-      refreshTree();
-      getKeyTree().select_node(0);
-      console.log('saved', arguments);
-      saveComplete();
+
+    $('#stringValue').val(data.value);
+    // a this is json now assume it shall be json if it is object or array, but not for numbers
+    if (isJsonParsed && data.value.match(/^\s*[{\[]/)) {
+      $('#isJson').click();
+    }
+
+    try {
+      $('#jqtree_string_div').html(JSONTree.create(JSON.parse(data.value)));
+    } catch (err) {
+      $('#jqtree_string_div').text('Text is no valid JSON: ' + err.message);
+    }
+
+    if (!redisReadOnly) {
+      $('#editStringForm').off('submit').on('submit', function(event) {
+        console.log('saving');
+        event.preventDefault();
+        var editForm = $(event.target);
+        $('#saveKeyButton').attr("disabled", "disabled").html("<i class='icon-refresh'></i> Saving");
+
+        $.post(editForm.attr('action'), editForm.serialize()
+        ).done(function(data, status) {
+          console.log('saved', arguments);
+          refreshTree();
+          getKeyTree().select_node(0);
+        })
+        .fail(function(err) {
+          console.log('save error', arguments);
+          alert("Could not save '" + err.statusText + "'");
+        })
+        .always(function() {
+          setTimeout(function() {
+            $('#saveKeyButton').removeAttr("disabled").html("Save");
+          }, 500);
+        });
+      });
     }
   });
-
-  function saveComplete () {
-    setTimeout(function () {
-      $('#saveKeyButton').html("Save");
-      $('#saveKeyButton').removeAttr("disabled");
-    }, 500);
-  }
 }
 
 function selectTreeNodeHash (data) {
-  var html = new EJS({ url: 'templates/editHash.ejs' }).render(data);
-  $('#body').html(html);
+  renderEjs('templates/editHash.ejs', data, $('#body'), function() {
+    console.log('edit hash template rendered');
+  });
 }
 
 function selectTreeNodeSet (data) {
-  var html = new EJS({ url: 'templates/editSet.ejs' }).render(data);
-  $('#body').html(html);
-  $('#addSetMemberForm').ajaxForm({
-    beforeSubmit: function () {
-      console.log('saving');
-      $('#saveMemberButton').button('loading');
-    },
-    error: function (err) {
-      console.log('save error', arguments);
-      alert("Could not save '" + err.statusText + "'");
-      saveComplete();
-    },
-    success: function () {
-      console.log('saved', arguments);
-      $('#saveMemberButton').button('reset');
-      saveComplete();
-    }
+  renderEjs('templates/editSet.ejs', data, $('#body'), function() {
+    console.debug('edit set template rendered');
   });
-  function saveComplete () {
-    setTimeout(function () {
-      $('#addSetMemberModal').modal('hide');
-      $('a.jstree-clicked').click();
-    }, 500);
-  }
 }
 
 function selectTreeNodeList (data) {
   if (data.items.length > 0) {
-    var html = new EJS({ url: 'templates/editList.ejs' }).render(data);
-    $('#body').html(html);
-    $('#addListValueForm').ajaxForm({
-      beforeSubmit: function () {
-        console.log('saving');
-        $('#saveValueButton').button('loading');
-      },
-      error: function (err) {
-        console.log('save error', arguments);
-        alert("Could not save '" + err.statusText + "'");
-        saveComplete();
-      },
-      success: function () {
-        console.log('saved', arguments);
-        $('#saveValueButton').button('reset');
-        saveComplete();
-      }
+    renderEjs('templates/editList.ejs', data, $('#body'), function() {
+      console.log('edit list template rendered');
     });
   } else {
     alert('Index out of bounds');
-  }
-  function saveComplete () {
-    setTimeout(function () {
-      $('#addListValueModal').modal('hide');
-      $('a.jstree-clicked').click();
-    }, 500);
   }
 }
 
 function selectTreeNodeZSet (data) {
   if (data.items.length > 0) {
-    var html = new EJS({ url: 'templates/editZSet.ejs' }).render(data);
-    $('#body').html(html);
+    renderEjs('templates/editZSet.ejs', data, $('#body'), function() {
+      console.log('rendered zset template');
+    });
   } else {
     alert('Index out of bounds');
   }
 }
 
+function selectTreeNodeStream (data) {
+  renderEjs('templates/editStream.ejs', data, $('#body'), function() {
+    console.log('rendered stream template');
+  });
+}
+
 function getKeyTree () {
-  return $.jstree._reference('#keyTree');
+  return $.jstree.reference('#keyTree');
 }
 
 function refreshTree () {
@@ -497,29 +500,40 @@ function refreshTree () {
 }
 
 function addKey (connectionId, key) {
-  if (typeof(connectionId) == 'object') {
-    key = getFullKeyPath(connectionId);
-    if (key.length > 0) {
-      key = key + ":";
+  if (typeof(connectionId) === 'object') {
+    // context menu click
+    var node = getKeyTree().get_node(connectionId.reference[0]);
+    key = getFullKeyPath(node);
+    if (key.length > 0 && !key.endsWith(foldingCharacter)) {
+      key = key + foldingCharacter;
     }
-    var pathParts = getKeyTree().get_path(connectionId, true);
-    connectionId = pathParts.slice(0, 1)[0];
+    connectionId = getRootConnection(node);
   }
-  $('#addKeyForm').attr('action', 'apiv1/key/' + encodeURIComponent(connectionId) + "/" + encodeURIComponent(key));
   $('#keyValue').val(key);
   $('#addKeyModal').modal('show');
   setupAddKeyButton(connectionId);
 }
+
 function deleteKey (connectionId, key) {
-  if (typeof(connectionId) == 'object') {
-    key = getFullKeyPath(connectionId);
-    var pathParts = getKeyTree().get_path(connectionId, true);
-    connectionId = pathParts.slice(0, 1)[0];
+  var node = null;
+  if (typeof(connectionId) === 'object') {
+      // context menu click
+      node = getKeyTree().get_node(connectionId.reference[0]);
+      key = getFullKeyPath(node);
+      connectionId = getRootConnection(node);
   }
-  var result = confirm('Are you sure you want to delete "' + key + ' from ' + connectionId + '"?');
+  node = getKeyTree().get_node(connectionId);
+
+  // context menu or DEL key pressed on folder item
+  if (key.endsWith(foldingCharacter)) {
+    deleteBranch(connectionId, key);
+    return;
+  }
+  // delete this specific key only, no wildcard here
+  var result = confirm('Are you sure you want to delete "' + key + '" from "' + node.text + '"?');
   if (result) {
-    $.post('apiv1/key/' + encodeURIComponent(connectionId) + '/' + encodeURIComponent(key) + '?action=delete', function (data, status) {
-      if (status != 'success') {
+    $.post('apiv2/key/' + encodeURIComponent(connectionId) + '/' + encodeURIComponent(key) + '?action=delete', function (data, status) {
+      if (status !== 'success') {
         return alert("Could not delete key");
       }
 
@@ -531,50 +545,52 @@ function deleteKey (connectionId, key) {
 }
 
 function decodeKey (connectionId, key) {
-  if (typeof(connectionId) == 'object') {
-    key = getFullKeyPath(connectionId);
-    var pathParts = getKeyTree().get_path(connectionId, true);
-    connectionId = pathParts.slice(0, 1)[0];
+  if (typeof(connectionId) === 'object') {
+      // context menu click
+      var node = getKeyTree().get_node(connectionId.reference[0]);
+      key = getFullKeyPath(node);
+      connectionId = getRootConnection(node);
   }
 
-  $.post('apiv1/key/' + encodeURIComponent(connectionId) + '/' + encodeURIComponent(key) + '?action=decode', function (data, status) {
-    if (status != 'success') {
+  $.post('apiv2/key/' + encodeURIComponent(connectionId) + '/' + encodeURIComponent(key) + '?action=decode', function (data, status) {
+    if (status !== 'success') {
       return alert("Could not decode key");
     }
 
-    $('#base64Button').html('Encode <small>base64</small');
-    $('#base64Button').off('click');
-    $('#base64Button').on('click', function() {
-      encodeString(connectionId, key)
-    });
+    $('#base64Button').html('Encode <small>base64</small>')
+      .off('click')
+      .on('click', function() {
+        encodeString(connectionId, key)
+      });
     $('#stringValue').val(data);
   });
 }
 
 function encodeString (connectionId, key) {
-  $.post('apiv1/encodeString/' + encodeURIComponent($('#stringValue').val()), function (data, status) {
-    if (status != 'success') {
+  $.post('apiv2/encodeString/' + encodeURIComponent($('#stringValue').val()), function (data, status) {
+    if (status !== 'success') {
       return alert("Could not encode key");
     }
 
     // needed to debounce
     setTimeout(function() {
-      $('#base64Button').html('Decode <small>base64</small');
-      $('#base64Button').off('click');
-      $('#base64Button').on('click', function() {
-        decodeKey(connectionId,key)
-      });
+      $('#base64Button').html('Decode <small>base64</small>')
+        .off('click')
+        .on('click', function() {
+          decodeKey(connectionId,key)
+        });
       $('#stringValue').val(data);
     }, 100);
   });
 }
 
 function deleteBranch (connectionId, branchPrefix) {
-  var query = branchPrefix + ':*';
-  var result = confirm('Are you sure you want to delete "' + query + ' from ' + connectionId + '"? This will delete all children as well!');
+  var node = getKeyTree().get_node(connectionId);
+  var query = (branchPrefix.endsWith(foldingCharacter) ? branchPrefix : branchPrefix + foldingCharacter) + '*';
+  var result = confirm('Are you sure you want to delete "' + query + '" from "' + node.text + '"? This will delete all children as well!');
   if (result) {
-    $.post('apiv1/keys/' + encodeURIComponent(connectionId) + "/" + encodeURIComponent(query) + '?action=delete', function (data, status) {
-      if (status != 'success') {
+    $.post('apiv2/keys/' + encodeURIComponent(connectionId) + "/" + encodeURIComponent(query) + '?action=delete', function (data, status) {
+      if (status !== 'success') {
         return alert("Could not delete branch");
       }
 
@@ -586,68 +602,148 @@ function deleteBranch (connectionId, branchPrefix) {
 }
 function addListValue (connectionId, key) {
   $('#key').val(key);
-  $('#addStringValue').val("");
+  $('#addListValue').val("");
   $('#addListConnectionId').val(connectionId);
   $('#addListValueModal').modal('show');
 }
-function editListRow (connectionId, key, index, value) {
+
+function editListValue (connectionId, key, index, value) {
   $('#editListConnectionId').val(connectionId);
   $('#listKey').val(key);
   $('#listIndex').val(index);
   $('#listValue').val(value);
-  $('#editListRowModal').modal('show');
-  setupEditListButton();
+  $('#listValueIsJson').prop('checked', false);
+  $('#editListValueModal').modal('show');
+  enableJsonValidationCheck(value, '#listValueIsJson');
 }
+
 function addSetMember (connectionId, key) {
   $('#addSetKey').val(key);
   $('#addSetMemberName').val("");
   $('#addSetConnectionId').val(connectionId);
   $('#addSetMemberModal').modal('show');
 }
+
 function editSetMember (connectionId, key, member) {
   $('#setConnectionId').val(connectionId);
   $('#setKey').val(key);
   $('#setMember').val(member);
   $('#setOldMember').val(member);
+  $('#setMemberIsJson').prop('checked', false);
   $('#editSetMemberModal').modal('show');
-  setupEditSetButton();
+  enableJsonValidationCheck(member, '#setMemberIsJson');
 }
-function editZSetRow (connectionId, key, score, value) {
+
+function addZSetMember (connectionId, key) {
+    $('#addZSetKey').val(key);
+    $('#addZSetScore').val("");
+    $('#addZSetMemberName').val("");
+    $('#addZSetConnectionId').val(connectionId);
+    $('#addZSetMemberModal').modal('show');
+}
+
+function editZSetMember (connectionId, key, score, value) {
   $('#zSetConnectionId').val(connectionId);
   $('#zSetKey').val(key);
   $('#zSetScore').val(score);
   $('#zSetValue').val(value);
   $('#zSetOldValue').val(value);
-  $('#editZSetRowModal').modal('show');
-  setupEditZSetButton();
+  $('#zSetValueIsJson').prop('checked', false);
+  $('#editZSetMemberModal').modal('show');
+  enableJsonValidationCheck(value, '#zSetValueIsJson');
 }
-function editHashRow (connectionId, key, field, value) {
+
+function addXSetMember (connectionId, key) {
+  $('#addXSetKey').val(key);
+  $('#addXSetTimestamp').val(Date.now()+'-0');
+  $('#addXSetField').val("");
+  $('#addXSetValue').val("");
+  $('#addXSetConnectionId').val(connectionId);
+  $('#addXSetMemberModal').modal('show');
+}
+
+function addHashField (connectionId, key) {
+    $('#addHashKey').val(key);
+    $('#addHashFieldName').val("");
+    $('#addHashFieldValue').val("");
+    $('#addHashConnectionId').val(connectionId);
+    $('#addHashFieldModal').modal('show');
+}
+
+function editHashField (connectionId, key, field, value) {
   $('#hashConnectionId').val(connectionId);
   $('#hashKey').val(key);
   $('#hashField').val(field);
   $('#hashFieldValue').val(value);
-  $('#editHashRowModal').modal('show');
-  setupEditHashButton();
+  $('#hashFieldIsJson').prop('checked', false);
+  $('#editHashFieldModal').modal('show');
+  enableJsonValidationCheck(value, '#hashFieldIsJson');
 }
+
+/** check if given string value is valid json and, if so enable validation
+ *  for given field if this is an json object or array. Do not automatically
+ *  enable validation on numbers or quted strings. May be coincidence that this is json...
+ *
+ *  @param {string} value string to check if valid json
+ *  @param {string} isJsonCheckBox id string of checkbox element to activate validation
+ */
+function enableJsonValidationCheck(value, isJsonCheckBox) {
+  try {
+    JSON.parse(value);
+    // if this is valid json and is array or object assume we want validation active
+    if (value.match(/^\s*[{\[]/)) {
+      $(isJsonCheckBox).click();
+    }
+  }
+  catch (ex) {
+    // do nothing
+  }
+}
+
 function removeListElement () {
   $('#listValue').val('REDISCOMMANDERTOMBSTONE');
-  $('#editListRowForm').submit();
+  $('#editListValueForm').submit();
 }
+
 function removeSetElement () {
   $('#setMember').val('REDISCOMMANDERTOMBSTONE');
   $('#editSetMemberForm').submit();
 }
+
 function removeZSetElement () {
   $('#zSetValue').val('REDISCOMMANDERTOMBSTONE');
-  $('#editZSetRowForm').submit();
+  $('#editZSetMemberForm').submit();
 }
+
 function removeHashField () {
   $('#hashFieldValue').val('REDISCOMMANDERTOMBSTONE');
   $('#editHashFieldForm').submit();
 }
 
+function removeXSetElement (connectionId, key, timestamp) {
+  $.ajax({
+    url: 'apiv2/xset/member',
+    method: 'DELETE',
+    data: {
+      connectionId: connectionId,
+      key: key,
+      timestamp: timestamp
+    }
+  }).done(function(data, status) {
+    console.log('entry at timestamp ' + timestamp + ' deleted');
+    refreshTree();
+    getKeyTree().select_node(0);
+  })
+  .fail(function(err) {
+    console.log('delete stream entry error', arguments);
+    alert("Could not delete stream member at timestamp " + timestamp + ': ' + err.statusText);
+  });
+}
+
+
 var commandLineScrollTop;
-var CLIOpen = false;
+var cliOpen = false;
+
 function hideCommandLineOutput () {
   var output = $('#commandLineOutput');
   if (output.is(':visible') && $('#lockCommandButton').hasClass('disabled')) {
@@ -655,7 +751,7 @@ function hideCommandLineOutput () {
       resizeApp();
       configChange();
     });
-    CLIOpen = false;
+    cliOpen = false;
     commandLineScrollTop = output.scrollTop() + 20;
     $('#commandLineBorder').removeClass('show-vertical-scroll');
   }
@@ -669,7 +765,7 @@ function showCommandLineOutput () {
       resizeApp();
       configChange();
     });
-    CLIOpen = true;
+    cliOpen = true;
     $('#commandLineBorder').addClass('show-vertical-scroll');
   }
 }
@@ -712,10 +808,10 @@ function loadCommandLine () {
       refreshTree();
       rl.write("OK");
     } else {
-      $.post('apiv1/exec', { cmd: line, connection: $('#selectedConnection').val() }, function (data, status) {
+      $.post('apiv2/exec/' + encodeURIComponent($('#selectedConnection').val()), { cmd: line }, function (data, status) {
         rl.prompt();
 
-        if (status != 'success') {
+        if (status !== 'success') {
           return alert("Could not delete branch");
         }
 
@@ -743,6 +839,88 @@ function loadCommandLine () {
   });
 }
 
+/** Remove all input validators attached to an form element (keyup handler)
+ *  as well as visual decorations applied
+ *
+ *  @param {string|object} inputId id of input element or jquery object to remove handler and decoration from
+ */
+function removeInputValidator(inputId) {
+  if (typeof inputId === 'string') {
+      inputId = $(document.getElementById(inputId));
+  }
+  inputId.off('keyup').removeClass('validate-negative').removeClass('validate-positive');
+}
+
+/** Add data format validation function to an input element.
+ *  The field gets decorated to visualize if input is valid for given data format.
+ *
+ *  @param {string|object} inputId id of html input element to watch or jquery object
+ *  @param {string} format data format to validate against, possible values: "json"
+ *  @param {boolean} [currentState] optional start state to set now
+ */
+function addInputValidator(inputId, format, currentState) {
+  var input;
+  if (typeof inputId === 'string') {
+    input = $('#' + inputId)
+  }
+  else if (typeof inputId === 'object') {
+    input = inputId;
+  }
+
+  if (!input){
+    console.log('Invalid html id given to validate format: ', inputId);
+    return;
+  }
+
+  switch (format) {
+    case 'json':
+        input.on('keyup', validateInputAsJson);
+        break;
+    default:
+        console.log('Invalid format given to validate input: ', format);
+        return;
+  }
+
+  // set initial state if requested
+  if (typeof currentState === 'boolean') {
+    setValidationClasses(input.get(0), currentState);
+  }
+  else {
+    input.trigger( "keyup" );
+  }
+}
+
+/** method to check if a input field contains valid json and set visual accordingly.
+ *
+ */
+function validateInputAsJson() {
+  if (this.value) {
+    try {
+      JSON.parse(this.value);
+      setValidationClasses(this, true);
+    }
+    catch(e) {
+      setValidationClasses(this, false);
+    }
+  }
+  else {
+    setValidationClasses(this, false)
+  }
+}
+
+/** classes are only changed if not set right now
+ *
+ * @param {Element} element HTML DOM element to change validation classes
+ * @param {boolean} success true if positive validation class shall be assigned, false for error class
+ */
+function setValidationClasses(element, success) {
+  var add = (success ? 'validate-positive' : 'validate-negative');
+  var remove = (success ? 'validate-negative' : 'validate-positive');
+  if (element.className.indexOf(add) < 0) {
+    $(element).removeClass(remove).addClass(add);
+  }
+}
+
 function escapeHtml (str) {
   return str
     .replace(/</g, '&lt;')
@@ -751,191 +929,82 @@ function escapeHtml (str) {
     .replace(/\s/g, '&nbsp;');
 }
 
-var cmdparser = new CmdParser([
-  "REFRESH",
-
-  "APPEND key value",
-  "AUTH password",
-  "BGREWRITEAOF",
-  "BGSAVE",
-  "BITCOUNT key [start] [end]",
-  "BITOP operation destkey key [key ...]",
-  "BLPOP key [key ...] timeout",
-  "BRPOP key [key ...] timeout",
-  "BRPOPLPUSH source destination timeout",
-  "CONFIG GET parameter",
-  "CONFIG SET parameter value",
-  "CONFIG RESETSTAT",
-  "DBSIZE",
-  "DEBUG OBJECT key",
-  "DEBUG SEGFAULT",
-  "DECR key",
-  "DECRBY key decrement",
-  "DEL key [key ...]",
-  "DISCARD",
-  "DUMP key",
-  "ECHO message",
-  "EVAL script numkeys key [key ...] arg [arg ...]",
-  "EVALSHA sha1 numkeys key [key ...] arg [arg ...]",
-  "EXEC",
-  "EXISTS key",
-  "EXPIRE key seconds",
-  "EXPIREAT key timestamp",
-  "FLUSHALL",
-  "FLUSHDB",
-  "GET key",
-  "GETBIT key offset",
-  "GETRANGE key start end",
-  "GETSET key value",
-  "HDEL key field [field ...]",
-  "HEXISTS key field",
-  "HGET key field",
-  "HGETALL key",
-  "HINCRBY key field increment",
-  "HINCRBYFLOAT key field increment",
-  "HKEYS key",
-  "HLEN key",
-  "HMGET key field [field ...]",
-  "HMSET key field value [field value ...]",
-  "HSET key field value",
-  "HSETNX key field value",
-  "HVALS key",
-  "INCR key",
-  "INCRBY key increment",
-  "INCRBYFLOAT key increment",
-  "INFO",
-  "KEYS pattern",
-  "LASTSAVE",
-  "LINDEX key index",
-  "LINSERT key BEFORE|AFTER pivot value",
-  "LLEN key",
-  "LPOP key",
-  "LPUSH key value [value ...]",
-  "LPUSHX key value",
-  "LRANGE key start stop",
-  "LREM key count value",
-  "LSET key index value",
-  "LTRIM key start stop",
-  "MGET key [key ...]",
-  "MIGRATE host port key destination-db timeout",
-  "MONITOR",
-  "MOVE key db",
-  "MSET key value [key value ...]",
-  "MSETNX key value [key value ...]",
-  "MULTI",
-  "OBJECT subcommand [arguments ...]",
-  "PERSIST key",
-  "PEXPIRE key milliseconds",
-  "PEXPIREAT key milliseconds-timestamp",
-  "PING",
-  "PSETEX key milliseconds value",
-  "PSUBSCRIBE pattern [pattern ...]",
-  "PTTL key",
-  "PUBLISH channel message",
-  "PUNSUBSCRIBE [pattern ...]",
-  "QUIT",
-  "RANDOMKEY",
-  "RENAME key newkey",
-  "RENAMENX key newkey",
-  "RESTORE key ttl serialized-value",
-  "RPOP key",
-  "RPOPLPUSH source destination",
-  "RPUSH key value [value ...]",
-  "RPUSHX key value",
-  "SADD key member [member ...]",
-  "SAVE",
-  "SCARD key",
-  "SCRIPT EXISTS script [script ...]",
-  "SCRIPT FLUSH",
-  "SCRIPT KILL",
-  "SCRIPT LOAD script",
-  "SDIFF key [key ...]",
-  "SDIFFSTORE destination key [key ...]",
-  "SELECT index",
-  "SET key value",
-  "SETBIT key offset value",
-  "SETEX key seconds value",
-  "SETNX key value",
-  "SETRANGE key offset value",
-  "SHUTDOWN [NOSAVE|SAVE]",
-  "SINTER key [key ...]",
-  "SINTERSTORE destination key [key ...]",
-  "SISMEMBER key member",
-  "SLAVEOF host port",
-  "SLOWLOG subcommand [argument]",
-  "SMEMBERS key",
-  "SMOVE source destination member",
-  "SORT key [BY pattern] [LIMIT offset count] [GET pattern [GET pattern ...]] [ASC|DESC] [ALPHA] [STORE destination]",
-  "SPOP key",
-  "SRANDMEMBER key",
-  "SREM key member [member ...]",
-  "STRLEN key",
-  "SUBSCRIBE channel [channel ...]",
-  "SUNION key [key ...]",
-  "SUNIONSTORE destination key [key ...]",
-  "SYNC",
-  "TIME",
-  "TTL key",
-  "TYPE key",
-  "UNSUBSCRIBE [channel ...]",
-  "UNWATCH",
-  "WATCH key [key ...]",
-  "ZADD key score member [score] [member]",
-  "ZCARD key",
-  "ZCOUNT key min max",
-  "ZINCRBY key increment member",
-  "ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]",
-  "ZRANGE key start stop [WITHSCORES]",
-  "ZRANGEBYSCORE key min max [WITHSCORES] [LIMIT offset count]",
-  "ZRANK key member",
-  "ZREM key member [member ...]",
-  "ZREMRANGEBYRANK key start stop",
-  "ZREMRANGEBYSCORE key min max",
-  "ZREVRANGE key start stop [WITHSCORES]",
-  "ZREVRANGEBYSCORE key max min [WITHSCORES] [LIMIT offset count]",
-  "ZREVRANK key member",
-  "ZSCORE key member",
-  "ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]"
-], {
-  key: function (partial, callback) {
-    var redisConnection = $('#selectedConnection').val();
-    $.get('apiv1/keys/' + encodeURIComponent(redisConnection) + "/" + partial + '*?limit=20', function (data, status) {
-      if (status != 'success') {
-        return callback(new Error("Could not get keys"));
-      }
-      data = JSON.parse(data)
-        .filter(function (item) {
-          return item.toLowerCase().indexOf(partial.toLowerCase()) === 0;
-        });
-      return callback(null, data);
+/** Fetch the url give at filename from the server and render the content of this
+ *  template with the data object. Afterwards the rendered html is added at the
+ *  html element given.
+ *
+ * @param {string} filename url to retrieve as template
+ * @param {object} data object to use for rendering
+ * @param {object} element jquery html element to attach rendered data to
+ * @param {function} [callback] optional function to call when rendering html is attached to dom
+ */
+function renderEjs(filename, data, element, callback) {
+  $.get(filename)
+    .done(function(htmlTmpl) {
+      element.html(ejs.render(htmlTmpl, data));
+    })
+    .fail(function(error) {
+      console.log('failed to get html template ' + filename + ': ' + JSON.stringify(error));
+      alert('failed to fetch html template ' + filename);
+    })
+    .always(function () {
+      if (typeof callback === 'function') callback();
+      resizeApp();
     });
-  }
-});
+}
+
 var configTimer;
 var prevSidebarWidth;
 var prevLocked;
-var prevCLIWidth;
-var prevCLIOpen;
+var prevCliHeight;
+var prevCliOpen;
 var configLoaded = false;
 
-function getServerInfo (callback) {
-  $.get('apiv1/server/info', function (data, status) {
-    callback(JSON.parse(data))
+
+function initCmdParser() {
+  let parserOpts = {
+    key: function (partial, callback) {
+      var redisConnection = $('#selectedConnection').val();
+      $.get('apiv2/keys/' + encodeURIComponent(redisConnection) + "/" + partial + '*?limit=20', function (data, status) {
+        if (status !== 'success') {
+          return callback(new Error("Could not get keys"));
+        }
+        data = JSON.parse(data)
+        .filter(function (item) {
+          return item.toLowerCase().indexOf(partial.toLowerCase()) === 0;
+        });
+        return callback(null, data);
+      });
+    }
+  };
+
+  $.get('apiv2/redisCommands')
+  .done(function(cmds) {
+    cmdparser = new CmdParser(cmds.list, parserOpts);
+  })
+  .fail(function(error) {
+    console.log('failed to load list of supported redis commands, cannot init CmdParser: ' + JSON.stringify(error));
+    cmdparser = new CmdParser([], parserOpts);
   });
 }
 
 function removeServer (connectionId) {
-  if (typeof(connectionId) == 'object') {
-    var pathParts = getKeyTree().get_path(connectionId, true);
-    connectionId = pathParts.slice(0, 1)[0];
+  var node = null;
+  if (typeof(connectionId) === 'object') {
+      // context menu click
+      node = getKeyTree().get_node(connectionId.reference[0]);
+      connectionId = getRootConnection(node);
   }
-  var result = confirm('Are you sure you want to disconnect from "' + connectionId + '"?');
+  else {
+    node = getKeyTree().get_node(connectionId);
+  }
+  var result = confirm('Are you sure you want to disconnect from "' + node.text + '"?');
   if (result) {
     $.post('logout/' + encodeURIComponent(connectionId), function (err, status) {
-      if (status != 'success') {
+      if (status !== 'success') {
         return alert("Could not remove instance");
       }
-      $(window).unbind('beforeunload'); // not sure if necessary
+      $(window).off('beforeunload', 'clearStorage');
       location.reload();
     });
   }
@@ -943,6 +1012,84 @@ function removeServer (connectionId) {
 
 function addServer () {
   $('#addServerForm').submit();
+}
+
+/** clear sensitive data (passwords) from add new server form modal and list db modal
+ */
+function clearAddServerForm() {
+  var serverForm = $('#addServerForm');
+  serverForm.find('#password').val('');
+  serverForm.find('#sentinelPassword').val('');
+  $('#selectServerDbList').attr('data-connstring', null).empty();
+}
+
+/** extract json data from ad server form and show new modal to allow selection all dbs
+ *  found at this redis server.
+ *  Only fields for server type, host, port, path and passwords are used. Label and database are ignored.
+ */
+function detectServerDB() {
+  var serverForm = $('#addServerForm');
+  $.ajax({
+    type: 'POST',
+    url: 'login/detectDB',
+    data: serverForm.serialize()
+  }).done(function(data) {
+    var selectDbModal = $('#selectServerDbModal');
+    if (!data.ok) {
+      alert('Cannot query databases used: \n' + data.message);
+    }
+    else {
+      serverForm.closest('.modal').modal('hide');
+      var renderData = {
+        title: 'Databases found at Redis ' + data.server + ':',
+        infoMessage: (data.dbs.used.length === 0 ? 'No databases found' : ''),
+        dbs: data.dbs.used,
+        connString: serverForm.serialize()
+      };
+      renderEjs('templates/detectRedisDb.ejs', renderData, $('#selectServerDbContainer'), function() {
+        console.log('rendered all databases found inside redis db template');
+        selectDbModal.modal('show');
+      });
+    }
+  }).fail(function (jqXHR) {
+    alert('Error fetching list of used databases from this host.');
+    clearAddServerForm();
+    serverForm.parent('.modal').modal('hide');
+  });
+}
+
+/** check list of selectServerDbModal and add all selected databases with their display name
+ *  do ajax post call for every selected to "/login" and reload at the end to refresh entire UI
+ */
+ function selectNewServerDbs() {
+  var addServerForm = $('#addServerForm');
+  var list = $('#selectServerDbModal').find('#selectServerDbList');
+  var connectionString = list.data('connstring');
+  var selected = list.find('input:checked');
+
+  Promise.all(selected.map(function(item) {
+    new Promise(function(resolve, reject) {
+      var params = deparam(connectionString);
+      params.dbIndex = selected[item].value;
+      params.label = $(selected[item]).closest('tr').find('input[type=text]').val();
+      $.ajax({
+        type: 'POST',
+        url: addServerForm[0].action,
+        data: $.param(params)
+      }).done(function (data) {
+        resolve(selected[item].value);
+      }).fail(function (err) {
+        reject(selected[item].value);
+      });
+    });
+  })).then(function(values) {
+    console.log('All database connections requested. Reload now to display then...');
+    clearAddServerForm();
+    setTimeout(function() {
+      $(window).off('beforeunload', 'clearStorage');
+      location.reload();
+    }, 200);
+  });
 }
 
 function loadDefaultServer (host, port) {
@@ -957,65 +1104,41 @@ function configChange () {
   if (!configLoaded) {
     var sidebarWidth = $('#sideBar').width();
     var locked = !$('#lockCommandButton').hasClass('disabled');
-    var CLIWidth = $('#commandLineContainer').height();
+    var cliHeight = $('#commandLineContainer').height();
 
-    if (typeof(prevSidebarWidth) != 'undefined' &&
-      (sidebarWidth != prevSidebarWidth ||
-        locked != prevLocked ||
-        CLIWidth != prevCLIWidth ||
-        CLIOpen != prevCLIOpen)) {
+    if (typeof(prevSidebarWidth) !== 'undefined' &&
+      (sidebarWidth != prevSidebarWidth || locked != prevLocked ||
+       cliHeight != prevCliHeight || cliOpen != prevCliOpen)) {
       clearTimeout(configTimer);
       configTimer = setTimeout(saveConfig, 2000);
     }
     prevSidebarWidth = sidebarWidth;
     prevLocked = locked;
-    prevCLIWidth = CLIWidth;
-    prevCLIOpen = CLIOpen;
+    prevCliHeight = cliHeight;
+    prevCliOpen = cliOpen;
   } else {
     configLoaded = false;
   }
 }
 
 function saveConfig () {
-  var sidebarWidth = $('#sideBar').width();
-  var locked = !$('#lockCommandButton').hasClass('disabled');
-  var CLIHeight = $('#commandLineContainer').height();
-  $.get('config', function (config) {
-    if (config) {
-      config["sidebarWidth"] = sidebarWidth;
-      config["locked"] = locked;
-      config["CLIHeight"] = CLIHeight;
-      config["CLIOpen"] = CLIOpen;
-      $.post('config', config, function (data, status) {
-      });
-    } else {
-      var config = {
-        "sidebarWidth": sidebarWidth,
-        "locked": locked,
-        "CLIHeight": CLIHeight,
-        "CLIOpen": CLIOpen,
-        "default_connections": []
-      };
-      $.post('config', config, function (data, status) {
-      });
-    }
-  });
+  // deprecated - not used anymore
 }
+
 function loadConfig (callback) {
   $.get('config', function (data) {
     if (data) {
       if (data['sidebarWidth']) {
         $('#sideBar').width(data['sidebarWidth']);
       }
-      if (data['CLIOpen'] == "true") {
-        $('#commandLineOutput').slideDown(0, function () {
-          if (data['CLIHeight']) {
-            $('#commandLineOutput').height(data['CLIHeight']);
-          }
-        });
-        CLIOpen = true;
+      if (data['cliHeight']) {
+        $('#commandLineOutput').height(data['cliHeight']);
       }
-      if (data['locked'] == "true") {
+      if (data['cliOpen'] == true) {
+        $('#commandLineOutput').slideDown(0, function () {});
+        cliOpen = true;
+      }
+      if (data['locked'] == true) {
         $('#lockCommandButton').removeClass('disabled');
       } else {
         $('#lockCommandButton').addClass('disabled');
@@ -1027,26 +1150,28 @@ function loadConfig (callback) {
     }
   });
 }
-function resizeApp () {
-  var barWidth = $('#keyTree').outerWidth(true);
-  $('#sideBar').css('width', barWidth);
-  var bodyMargin = parseInt($('#body').css('margin-left'), 10);
-  var newBodyWidth = $(window).width() - barWidth - bodyMargin;
-  $('#body,#itemActionsBar').css('width', newBodyWidth);
-  $('#body,#itemActionsBar').css('left', barWidth);
 
-  $('#keyTree').height($(window).height() - $('#keyTree').offset().top - $('#commandLineContainer').outerHeight(true));
-  $('#body, #sidebarResize').css('height', $('#sideBar').css('height'));
+function resizeApp () {
+  var body = $('#body');
+  var keyTree = $('#keyTree');
+  var sideBar =  $('#sideBar');
+  var barWidth = keyTree.outerWidth(true);
+  var newBodyWidth = $(window).width() - barWidth - parseInt(body.css('margin-left'), 10);
+  sideBar.css('width', barWidth);
+  body.css({'width': newBodyWidth, 'left': barWidth, 'height': sideBar.css('height')});
+  keyTree.height($(window).height() - keyTree.offset().top - $('#commandLineContainer').outerHeight(true));
+  $('#itemData').css('margin-top', $('#itemActionsBar').outerHeight(false));
   configChange();
 }
+
 function setupResizeEvents () {
   var sidebarResizing = false;
   var sidebarFrame = $("#sideBar").width();
   var commandResizing = false;
   var commandFrame = $('#commandLineOutput').height();
 
-  $('#keyTree').bind('resize', resizeApp);
-  $(window).bind('resize', resizeApp);
+  $('#keyTree').on('resize', resizeApp);
+  $(window).on('resize', resizeApp);
 
   $(document).mouseup(function (event) {
     sidebarResizing = false;
@@ -1076,6 +1201,7 @@ function setupResizeEvents () {
     }
   });
 }
+
 function setupCommandLock () {
   $('#lockCommandButton').click(function () {
     $(this).toggleClass('disabled');
@@ -1085,31 +1211,31 @@ function setupCommandLock () {
 
 function setupCLIKeyEvents () {
   var ctrl_down = false;
-  var isMac = navigator.appVersion.indexOf("Mac") != -1;
+  var isMac = navigator.appVersion.indexOf("Mac") !== -1;
   var cli = $('#_readline_cliForm input');
-  cli.live('keydown', function (e) {
+  cli.on('keydown', function (e) {
     var key = e.which;
     //ctrl
-    if (key == 17 && isMac) {
+    if (key === 17 && isMac) {
       ctrl_down = true;
     }
 
     //c
-    if (key == 67 && ctrl_down) {
+    if (key === 67 && ctrl_down) {
       clearCLI();
       e.preventDefault();
     }
 
     //esc
-    if (key == 27) {
+    if (key === 27) {
       clearCLI();
       e.preventDefault();
     }
   });
-  cli.live('keyup', function (e) {
+  cli.on('keyup', function (e) {
     var key = e.which;
     //ctrl
-    if (key == 17 && isMac) {
+    if (key === 17 && isMac) {
       ctrl_down = false;
     }
   });
@@ -1124,10 +1250,26 @@ function setupCLIKeyEvents () {
   }
 }
 
+function toggleRedisModal() {
+  var redisModal = $('#redisCommandsModal');
+  // change 'modal' to 'bs.modal' for bootstrap >=3, isShown to _isShown for bootstrap 4
+  if ((redisModal.data('modal') || {}).isShown) {
+      redisModal.modal('hide');
+  }
+  else {
+      var redisIframe = redisModal.find('#redisCommandsModalSrc');
+      if (!redisIframe.attr('src')) {
+          redisIframe.attr('src', 'https://redis.io/commands');
+          redisModal.find('#redisCommandsExternal').attr('href', 'https://redis.io/commands');
+      }
+      redisModal.modal('show');
+  }
+}
+
 $(function() {
   function refreshQueryToken() {
     $.post('signin', {}, function (data, status) {
-      if ((status != 'success') || !data || !data.ok) {
+      if ((status !== 'success') || !data || !data.ok) {
         console.error("Cannot refresh query token");
         return;
       }
@@ -1149,52 +1291,55 @@ $(function() {
   });
 
   /**
-   * Import redis data.
-   */
-  $('#app-container').on('submit', '#redisImportForm', function () {
-    $('#body').html('<h2>Import</h2>Importing in progress. Prease wait...');
-
-    $.ajax({
-      type: 'POST',
-      url: 'tools/import',
-      data: $(this).serialize() + '&redisCommanderQueryToken=' + encodeURIComponent(sessionStorage.getItem('redisCommanderQueryToken') || ''),
-      dataType: 'JSON',
-      success: function (res) {
-        $('#body').html('<h2>Import</h2>' +
-          '<div>Inserted: ' + res.inserted + '</div>' +
-          '<div>Errors: ' + res.errors + '</div><br/>' +
-          '<span class="label label-' + (res.errors ? 'important' : 'success') + '">' + (res.errors ? 'Errors' : 'Success') + '</span>');
-      }
-    });
-    refreshQueryToken();
-    return false;
-  });
-
-  /**
-   * Show import form.
-   */
-  $('#redisImportData').on('click', function () {
-    $.ajax({
-      type: 'POST',
-      url: 'tools/forms/import',
-      success: function (res) {
-        $('#body').html(res);
-      }
-    });
-  });
-
-  /**
    * Show export form.
    */
   $('#redisExportData').on('click', function () {
     $.ajax({
-      type: 'POST',
+      method: 'POST',
       url: 'tools/forms/export',
       success: function (res) {
         $('#body').html(res);
       }
     });
   });
+
+  /**
+   * Import redis data.
+   */
+  if (!redisReadOnly) {
+    $('#app-container').on('submit', '#redisImportForm', function() {
+      $('#body').html('<h2>Import</h2>Importing in progress. Prease wait...');
+
+      $.ajax({
+        method: 'POST',
+        url: 'tools/import',
+        data: $(this).serialize() + '&redisCommanderQueryToken=' + encodeURIComponent(sessionStorage.getItem('redisCommanderQueryToken') || ''),
+        dataType: 'json',
+        success: function(res) {
+          $('#body').html('<h2>Import</h2>' +
+            '<div>Inserted: ' + res.inserted + '</div>' +
+            '<div>Errors: ' + res.errors + '</div><br/>' +
+            '<span class="label label-' + (res.errors ? 'important' : 'success') + '">' + (res.errors ? 'Errors' : 'Success') + '</span>');
+        }
+      });
+      refreshQueryToken();
+      return false;
+    });
+
+    /**
+     * Show import form.
+     */
+    $('#redisImportData').on('click', function () {
+      $.ajax({
+        method: 'POST',
+        url: 'tools/forms/import',
+        success: function (res) {
+          $('#body').html(res);
+        }
+      });
+    });
+  }
+
 
   /**
    * Refresh and expand all nodes in tree
@@ -1204,3 +1349,32 @@ $(function() {
     $('#keyTree').jstree('open_all');
   });
 });
+
+
+function deparam(query) {
+  var pairs, i, keyValuePair, key, value, map = {};
+  // remove leading question mark if its there
+  if (query.slice(0, 1) === '?') {
+    query = query.slice(1);
+  }
+  if (query !== '') {
+    pairs = query.split('&');
+    for (i = 0; i < pairs.length; i += 1) {
+      keyValuePair = pairs[i].split('=');
+      key = decodeURIComponent(keyValuePair[0]);
+      value = (keyValuePair.length > 1) ? decodeURIComponent(keyValuePair[1]) : undefined;
+      map[key] = value;
+    }
+  }
+  return map;
+}
+
+/// IE11 polyfills
+if (!String.prototype.endsWith) {
+  String.prototype.endsWith = function(search, this_len) {
+    if (this_len === undefined || this_len > this.length) {
+      this_len = this.length;
+    }
+    return this.substring(this_len - search.length, this_len) === search;
+  };
+}

@@ -1,18 +1,31 @@
-#!/bin/sh
+#!/usr/bin/env sh
 
-CONFIG_FILE=${HOME}/.redis-commander
+# autowrite config file containing node_env to let config module automatically pick this up.
+# this file is evaluated nearly at the end of all files possible:
+# see https://github.com/lorenwest/node-config/wiki/Configuration-Files
+# this file only contains the connections to load, nothing else
+# to overwrite something else just place additional files beside this one inside config folder (e.g. local.json)
+CONFIG_FILE=${HOME}/config/local-${NODE_ENV}.json
+
+# set default instance for node config ("docker") but allow overwriting via docker env vars
+NODE_APP_INSTANCE=${NODE_APP_INSTANCE:-docker}
+
+# when running in kubernetes we need to wait a bit before exiting on SIGTERM
+# https://github.com/kubernetes/contrib/issues/1140#issuecomment-290836405
+K8S_SIGTERM=${K8S_SIGTERM:-0}
+
+# seconds to wait befor sending sigterm to app on exit
+# only used if K8S_SIGTERM=1
+GRACE_PERIOD=6
+
+
 
 writeDefaultConfigBeginning() {
-    echo 'Creating custom redis-commander config.'
+    echo "Creating custom redis-commander config '${CONFIG_FILE}'."
 
     # =============== generate beginning of redis-commander config =============== #
     cat > ${CONFIG_FILE} <<EOF
     {
-    "sidebarWidth":250,
-    "locked":false,
-    "CLIHeight":50,
-    "CLIOpen":false,
-    "default_connections": [
 EOF
     # ============= end generate beginning of redis-commander config ============= #
 }
@@ -21,7 +34,6 @@ EOF
 writeDefaultConfigEnd() {
     # ================== generate end of redis-commander config ================== #
     cat >> ${CONFIG_FILE} <<EOF
-        ]
     }
 EOF
     # ================ end generate end of redis-commander config ================ #
@@ -30,14 +42,22 @@ EOF
 
 parseRedisHosts() {
     writeDefaultConfigBeginning
-    
+
     # split REDIS_HOSTS on comma (,)
     # local:localhost:6379,custom-label:my.hostname
     #   -> local:localhost:6379 custom-label:my.hostname
     redis_hosts_split="$(echo ${REDIS_HOSTS} | sed "s/,/ /g")"
-    
+
     # get hosts count
     num_redis_hosts="$(echo ${redis_hosts_split} | wc -w)"
+
+    echo "Parsing $num_redis_hosts REDIS_HOSTS into custom redis-commander config '${CONFIG_FILE}'."
+
+    if [ $num_redis_hosts -gt 0 ]; then
+        cat >> ${CONFIG_FILE} <<EOF
+    "connections": [
+EOF
+    fi
 
     # =================== loop on redis hosts and generate config ================ #
     # redis_host form should be
@@ -58,7 +78,7 @@ parseRedisHosts() {
         # local:localhost:6379
         #   -> local localhost 6379
         host_split="$(echo ${redis_host} | sed "s/:/ /g")"
-    
+
         # get host param count
         num_host_params="$(echo "${host_split}" | wc -w)"
 
@@ -106,7 +126,12 @@ EOF
 
     done
     # ================ end loop on redis hosts and generate config =============== #
-    
+    if [ $num_redis_hosts -gt 0 ]; then
+        cat >> ${CONFIG_FILE} <<EOF
+    ]
+EOF
+    fi
+
     writeDefaultConfigEnd
 }
 
@@ -120,18 +145,22 @@ if [[ ! -e ${CONFIG_FILE} ]]; then
     writeDefaultConfigEnd
 fi
 
-echo 'Configuration:'
-cat ${CONFIG_FILE}
-
 # load HTTP password from a file (e.g. a Docker secret mounted in the container)
 HTTP_PASSWORD_FILE=${HTTP_PASSWORD_FILE:-/}
 
 if [ -f $HTTP_PASSWORD_FILE ]; then
     HTTP_PASSWORD=$(cat $HTTP_PASSWORD_FILE)
+    # this env var is evaluated by node-config module, not set as cli param
+    # to not show it in process listing / write to docker logs ...
     export HTTP_PASSWORD="$HTTP_PASSWORD"
 fi
 
 # add other commands as environment variables
+# here only env vars related to redis connections are evaluated
+# all other env vars are checked by node-config module ...
+# for an complete list of all other env vars with their mapping
+# see file "config/custom_environment_variables.json"
+
 if [[ ! -z "$REDIS_PORT" ]]; then
     set -- "$@" "--redis-port $REDIS_PORT"
 fi
@@ -144,6 +173,12 @@ if [[ ! -z "$REDIS_SOCKET" ]]; then
     set -- "$@" "--redis-socket $REDIS_SOCKET"
 fi
 
+if [[ ! -z "$REDIS_TLS" ]]; then
+    if [[ "$REDIS_TLS" = "1" || "$REDIS_TLS" = "true" || "$REDIS_TLS" = "yes" || "$REDIS_TLS" = "on" ]]; then
+        set -- "$@" "--redis-tls"
+    fi
+fi
+
 if [[ ! -z "$REDIS_PASSWORD" ]]; then
     set -- "$@" "--redis-password $REDIS_PASSWORD"
 fi
@@ -152,33 +187,77 @@ if [[ ! -z "$REDIS_DB" ]]; then
     set -- "$@" "--redis-db $REDIS_DB"
 fi
 
-if [[ ! -z "$HTTP_USER" ]]; then
-    set -- "$@" "--http-u $HTTP_USER"
+if [[ ! -z "$SENTINEL_PORT" ]]; then
+    set -- "$@" "--sentinel-port $SENTINEL_PORT"
 fi
 
-if [[ ! -z "$HTTP_PASSWORD" ]]; then
-    set -- "$@" "--http-p $HTTP_PASSWORD"
+if [[ ! -z "$SENTINEL_HOST" ]]; then
+    set -- "$@" "--sentinel-host $SENTINEL_HOST"
 fi
 
-if [[ ! -z "$HTTP_PASSWORD_HASH" ]]; then
-    set -- "$@" "--http-h $HTTP_PASSWORD_HASH"
+if [[ ! -z "$SENTINELS" ]]; then
+    set -- "$@" "--sentinels $SENTINELS"
 fi
 
-if [[ ! -z "$PORT" ]]; then
-    set -- "$@" "--port $PORT"
+if [[ ! -z "$SENTINEL_NAME" ]]; then
+    set -- "$@" "--sentinel-name $SENTINEL_NAME"
 fi
 
-if [[ ! -z "$ADDRESS" ]]; then
-    set -- "$@" "--address $ADDRESS"
+if [[ ! -z "$SENTINEL_PASSWORD" ]]; then
+    set -- "$@" "--sentinel-password $SENTINEL_PASSWORD"
 fi
 
-if [[ ! -z "$ROOT_PATTERN" ]]; then
-    set -- "$@" "--root-pattern $ROOT_PATTERN"
+if [[ ! -z "$REPLACE_CONFIG_ENV" ]]; then
+    # special case for more complex docker setup with multiple connections
+    # to unix sockets, sentinels and normal redis server not configurable
+    # via REDIS_HOSTS...
+    # search all config files (except custom-environment-variables.json) and do inplace
+    # replacement of a string to the value of the env var, e.g.
+    # set $REPLACE_CONFIG_ENV=REDIS_PASS_1 and env REDIS_PASS_1=mypass
+    # now search config files for string "REDIS_PASS_1" and write there "mypass" instead
+
+    env_vars_replace="$(echo ${REPLACE_CONFIG_ENV} | sed "s/,/ /g")"
+    echo "Going to replace this env vars inside config files: $env_vars_replace"
+
+    for env_var in ${env_vars_replace}; do
+        for json_conf in config/*.json; do
+            if [ $json_conf != "config/custom-environment-variables.json" ]; then
+                # need to replace &\/ from content of env_var var as they are special chars in sed
+                sed -i 's/"'$env_var'"/"'$(printenv $env_var | sed 's/\\/\\\\/g; s/&/\\&/g; s#/#\\/#g;')'"/g' $json_conf
+            fi
+        done
+    done
 fi
 
-if [[ ! -z "$URL_PREFIX" ]]; then
-    set -- "$@" "--url-prefix $URL_PREFIX"
+# all other env vars are evaluated by node-config module ...
+
+#echo "DEBUG: cat all config files after creation / replacement"
+#for i in config/*.json; do
+#    if [ $i != "config/custom-environment-variables.json" ]; then
+#        echo .
+#        echo "###config file: $i"
+#        cat $i
+#    fi
+#done
+
+# install trap for SIGTERM to delay end of app a bit for kubernetes
+# otherwise container might get requests after exiting itself
+exitTrap() {
+    echo "Got signal, wait a bit before exit"
+    sleep $GRACE_PERIOD
+    kill -TERM $NODE_PID
+}
+
+if [ "$K8S_SIGTERM" = "1" ]; then
+    trap exitTrap TERM INT
+    echo "node ./bin/redis-commander "$@" for k8s"
+    setsid /usr/local/bin/node ./bin/redis-commander $@ &
+    NODE_PID=$!
+    wait $NODE_PID
+    trap - TERM INT
+    wait $NODE_PID
+else
+    echo "node ./bin/redis-commander "$@""
+    exec /usr/local/bin/node ./bin/redis-commander $@
 fi
 
-echo "node ./bin/redis-commander "$@""
-exec node ./bin/redis-commander $@

@@ -28,6 +28,10 @@ body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), inset 0 -1px 0 rgba(0, 0, 0, 0.1);
 }
 
+.navbar .brand {
+  padding: 0 0 0 20px;
+}
+
 #sideBar {
   position: fixed;
   top: 40px;
@@ -35,6 +39,19 @@ body {
   width: 250px;
   border-right: 1px solid #DDD;
   z-index: 1;
+}
+
+#sidebarResize {
+  position: absolute;
+  top: 0;
+  right: -11px;
+  height: 100%;
+  width: 1px;
+  background-color: transparent;
+  border-width: 0 10px;
+  border-style: solid;
+  border-color: transparent;
+  cursor: col-resize;
 }
 
 #keyTree {
@@ -47,29 +64,23 @@ body {
   margin-top: 5px;
 }
 
+#keyTreeActions .btn-mini [class^="icon-"], #keyTreeActions .btn-mini [class*=" icon-"] {
+  margin-top: 0;
+  vertical-align: top;
+}
+
 #itemData {
-  overflow: scroll;
-  margin-top: 32px;
+  overflow-x: auto;
+  margin-top: 62px;
 }
 
-.jstree-default.jstree-focused {
-  background: #fff !important;
-}
-
-#sidebarResize {
-  position: absolute;
-  top: 0;
-  right: -11px;
-  height: 100%;
-  width: 1px;
-  background-color: transparent;
-  border: 10px solid transparent;
-  cursor: col-resize;
+#itemData .btn-mini [class^="icon-"], #itemData .btn-mini [class*=" icon-"] {
+  margin-top: 1px;
 }
 
 #body {
   position: relative;
-  overflow-y: scroll;
+  overflow-y: auto;
   overflow-x: hidden;
   left: 250px;
   margin-left: 30px;
@@ -77,12 +88,12 @@ body {
 
 #itemActionsBar {
   position: fixed;
-  top: 0px;
-  left: 250px;
+  top: 0;
+  left: inherit;
   margin-left: 30px;
-  width: 100%;
+  width: inherit;
   margin-top: 30px;
-  padding-bottom: 5px;
+  padding-bottom: 10px;
   padding-top: 20px;
   background-color: #fff;
   border-bottom: 1px solid #ddd;
@@ -95,6 +106,10 @@ body {
   background-color: #fff;
   width: 100%;
   z-index: 1039;
+}
+
+#commandLineContainer .btn-group {
+    white-space: normal;
 }
 
 #commandLineContainer form {
@@ -132,9 +147,6 @@ body {
   padding-left: 15px;
   font-family: Menlo, "monospace","Courier New";
   overflow: scroll;
-}
-
-#commandLine {
 }
 
 #commandLine input {
@@ -176,6 +188,7 @@ body {
   display: inline-block;
   float: right;
   margin-right: 20px;
+  margin-bottom: 0;
 }
 
 #lockCommandButton.disabled {
@@ -206,6 +219,13 @@ body {
   overflow: hidden;
 }
 
+#redisCommandsModal iframe {
+  border-radius: 6px;
+  border: none;
+  width: 100%;
+  height: 400px;
+}
+
 #redisCommandsClose {
   position: absolute;
   top: 10px;
@@ -216,13 +236,6 @@ body {
 
 #redisCommandsClose:hover {
   color: white;
-}
-
-#redisCommandsModal iframe {
-  border-radius: 6px;
-  border: none;
-  width: 100%;
-  height: 400px;
 }
 
 #redisCommandsExternal {
@@ -240,16 +253,15 @@ body {
 }
 
 #addServerContainer {
-  padding-left: 20px;
+  padding-left: 35px;
 }
 
-#scoreWrap {
+#scoreWrap, #fieldWrap, #timestampWrap, #fieldValueWrap {
   display: none;
-  margin-left: 10px;
 }
 
-.navbar .brand {
-  padding: 0 0 0 20px;
+#scoreWrap > input, #fieldWrap > input, #timestampWrap > input, #fieldValueWrap > input, #fieldValueWrap > textarea {
+  margin-bottom: 10px;
 }
 
 #vakata-contextmenu {
@@ -279,6 +291,80 @@ body {
   height: 300px;
 }
 
-.modal .form-horizontal {
+.modal .form-horizontal, .modal .form-vertical {
   margin: 0;
+}
+
+.label-big .lead {
+  margin-bottom: 10px;
+  margin-top: 10px;
+}
+
+#signinForm {
+  margin: 0;
+}
+
+#addKeyForm {
+  margin: 0;
+}
+
+.modal-content-width {
+  margin-left: auto;
+  margin-right: auto;
+  width: calc(100% - 15px);
+}
+
+.control-group input, .control-group select{
+  margin-bottom: 0;
+}
+
+.validate-negative, .validate-negative:focus {
+  background-color: #fff;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.05), inset 0 0 6px #ff1a1a;
+}
+
+.validate-positive, .validate-positive:focus {
+  background-color: #fff;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075), inset 0 0 6px #87d738;
+}
+
+.redisDumpSelect {
+  min-width: 230px;
+  width: auto;
+}
+/* without explicit z-index tree and contextmenu marged into one layer, preventing clicks
+   must be larger than command line z-index
+ */
+.jstree-contextmenu {
+  z-index: 1100;
+}
+
+input[type="checkbox"].checkbox-oneline {
+  margin: 0 0 0 10px;
+  overflow: hidden;
+  position: relative;
+  top: -3px;
+  vertical-align: bottom;
+}
+
+#selectServerDbModal {
+  width: 650px;
+}
+
+#selectServerDbList {
+  margin-top: 16px;
+}
+
+#selectServerDbList input[type="checkbox"] {
+  margin-bottom: 7px;
+  margin-top: 5px;
+}
+
+#selectServerDbList input[type="text"],
+#selectServerDbList label {
+  margin-bottom: 0;
+}
+
+#selectServerDbList table td {
+  vertical-align: middle;
 }
